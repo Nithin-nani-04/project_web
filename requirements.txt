@@ -3,3 +3,6 @@ torch
 transformers
 datasets
 soundfile
+sentencepiece
+numpy
+pandas
