@@ -148,25 +148,57 @@ def audio_processing_page():
         corrected_transcription = correct_grammar(transcription)
         st.write("**Corrected Transcription:**", corrected_transcription)
 
+# Displaying Model Details
+def display_model_details():
+    st.markdown("### Model Details")
+
+    st.subheader("Wav2Vec2 (ASR Model)")
+    st.write(
+        """
+        - **Model Name**: Hybrid ASR Model
+        - **Task**: Automatic Speech Recognition (ASR)
+        - **Description**: Wav2Vec2 is a deep learning model that performs automatic speech recognition.
+        - **Pretrained On**: 24 hours of English speech data.
+        - **Input**: Raw audio waveform.
+        - **Output**: Transcribed text.
+        """
+    )
+    
+    st.subheader("T5 (Grammar Error Correction Model)")
+    st.write(
+        """
+        - **Model Name**: T5 (Text-to-Text Transfer Transformer)
+        - **Task**: Grammar Error Correction (GEC)
+        - **Description**: T5 is a transformer-based model capable of various text generation tasks, including grammar correction.
+        - **Input**: Transcribed text.
+        - **Output**: Corrected text with grammar improvements.
+        """
+    )
+
 # Main page selection
 def main_page():
+    if 'logged_in' not in st.session_state:
+        st.session_state.logged_in = False
+
     st.sidebar.title("Navigation")
-    menu = st.sidebar.radio("Select an Option", ["Login", "Register", "Upload Audio", "Feedback", "Logout"])
+    if st.session_state.logged_in:
+        menu = st.sidebar.radio("Select an Option", ["Upload Audio", "Feedback", "Logout", "Model Details"])
+    else:
+        menu = st.sidebar.radio("Select an Option", ["Login", "Register"])
 
     if menu == "Register":
         register_page()
     elif menu == "Login":
         login_page()
     elif menu == "Upload Audio":
-        if st.session_state.get("logged_in", False):
-            audio_processing_page()
-        else:
-            st.warning("Please log in first.")
+        audio_processing_page()
     elif menu == "Feedback":
         feedback_page()
     elif menu == "Logout":
         st.session_state.logged_in = False
         st.success("You have logged out successfully.")
+    elif menu == "Model Details":
+        display_model_details()
 
 # Set Streamlit page configuration
 st.set_page_config(page_title="Speech-to-Text and GEC", page_icon="📝", layout="wide")
