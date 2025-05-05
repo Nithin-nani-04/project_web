@@ -1,17 +1,17 @@
 import streamlit as st
 import torch
-from transformers import Wav2Vec2Processor, Wav2Vec2ForCTC, AutoTokenizer, AutoModelForSeq2SeqLM
+from transformers import Wav2Vec2Processor, Wav2Vec2ForCTC, T5ForConditionalGeneration, T5Tokenizer
 import soundfile as sf
-import os
 import json
+import os
 
 # Load Wav2Vec2 model and processor for ASR (speech-to-text)
 processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-large-960h")
 model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-large-960h")
 
 # Load T5 model and tokenizer for Grammar Error Correction (GEC)
-tokenizer = AutoTokenizer.from_pretrained("gotutiyan/gec-t5-base-clang8")
-gec_model = AutoModelForSeq2SeqLM.from_pretrained("gotutiyan/gec-t5-base-clang8")
+t5_model = T5ForConditionalGeneration.from_pretrained("t5-small")
+t5_tokenizer = T5Tokenizer.from_pretrained("t5-small")
 
 # Utility function to transcribe audio (ASR)
 def transcribe_audio(file_path):
@@ -25,11 +25,11 @@ def transcribe_audio(file_path):
 
 # Utility function to correct grammar (GEC) using T5
 def correct_grammar(text):
-    input_text = "grammar: " + text  # Adding task prefix for GEC
-    inputs = tokenizer(input_text, return_tensors="pt", max_length=512, truncation=True)
+    input_text = "grammar: " + text  # Adding task prefix for T5 model
+    inputs = t5_tokenizer(input_text, return_tensors="pt", max_length=512, truncation=True)
     with torch.no_grad():
-        outputs = gec_model.generate(**inputs, max_length=512)
-    corrected_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        outputs = t5_model.generate(**inputs, max_length=512)
+    corrected_text = t5_tokenizer.decode(outputs[0], skip_special_tokens=True)
     return corrected_text
 
 # Registration
@@ -55,7 +55,7 @@ def login_user(username, password):
                 return True
     return False
 
-# Streamlit UI for registration
+# Streamlit UI
 def register_page():
     st.title("Register")
     new_user = st.text_input("New Username")
@@ -67,7 +67,6 @@ def register_page():
         else:
             st.error("Please enter both username and password.")
 
-# Streamlit UI for login
 def login_page():
     st.title("Login")
     username = st.text_input("Username")
@@ -79,7 +78,6 @@ def login_page():
         else:
             st.error("Invalid username or password.")
 
-# Audio processing page (ASR and GEC)
 def audio_processing_page():
     st.title("Upload Audio for Transcription and GEC")
     uploaded_audio = st.file_uploader("Choose an audio file", type=["wav", "mp3", "flac"])
