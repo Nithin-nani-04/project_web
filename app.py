@@ -1,124 +1,190 @@
-import streamlit as st
-import torch
-from transformers import Wav2Vec2Processor, Wav2Vec2ForCTC, T5ForConditionalGeneration, T5Tokenizer
-import soundfile as sf
-import json
 import os
+import json
+import shutil
+import streamlit as st
+import tensorflow as tf
+import numpy as np
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+from keras.models import load_model
+import torch
 
-# Load Wav2Vec2 model and processor for ASR (speech-to-text)
-processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-large-960h")
-model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-large-960h")
+# ----------------- Authentication Functions -----------------
+def load_users():
+    if os.path.exists('user.json'):
+        with open('user.json', 'r') as f:
+            return json.load(f)
+    return {}
 
-# Load T5 model and tokenizer for Grammar Error Correction (GEC)
-t5_model = T5ForConditionalGeneration.from_pretrained("t5-small")
-t5_tokenizer = T5Tokenizer.from_pretrained("t5-small")
+def save_users(users):
+    with open('user.json', 'w') as f:
+        json.dump(users, f, indent=4)
 
-# Utility function to transcribe audio (ASR)
-def transcribe_audio(file_path):
-    speech, _ = sf.read(file_path)
-    input_values = processor(speech, return_tensors="pt").input_values
-    with torch.no_grad():
-        logits = model(input_values).logits
-    predicted_ids = torch.argmax(logits, dim=-1)
-    transcription = processor.batch_decode(predicted_ids)
-    return transcription[0]
+def authenticate(username, password):
+    users = load_users()
+    return users.get(username) == password
 
-# Utility function to correct grammar (GEC) using T5
-def correct_grammar(text):
-    input_text = "grammar: " + text  # Adding task prefix for T5 model
-    inputs = t5_tokenizer(input_text, return_tensors="pt", max_length=512, truncation=True)
-    with torch.no_grad():
-        outputs = t5_model.generate(**inputs, max_length=512)
-    corrected_text = t5_tokenizer.decode(outputs[0], skip_special_tokens=True)
+def register_user(username, password):
+    users = load_users()
+    if username in users:
+        return False
+    users[username] = password
+    save_users(users)
+    return True
+
+# ----------------- Logging Functions -----------------
+def log_file_info(user, filename, original_text, corrected_text):
+    data = {
+        "user": user,
+        "file": filename,
+        "original_text": original_text,
+        "corrected_text": corrected_text
+    }
+    if os.path.exists('file.json'):
+        with open('file.json', 'r') as f:
+            try:
+                file_log = json.load(f)
+            except:
+                file_log = []
+    else:
+        file_log = []
+
+    file_log.append(data)
+    with open('file.json', 'w') as f:
+        json.dump(file_log, f, indent=4)
+
+def log_feedback(user, feedback):
+    data = {"user": user, "feedback": feedback}
+    with open('feedback.json', 'a') as f:
+        json.dump(data, f)
+        f.write("\n")
+
+# ----------------- Model Loading -----------------
+asr_model = load_model('ASR2_Model.h5', compile=False)
+tokenizer = AutoTokenizer.from_pretrained("gotutiyan/gec-t5-base-clang8")
+t5_model = AutoModelForSeq2SeqLM.from_pretrained("gotutiyan/gec-t5-base-clang8")
+vocabulary = [""] + [chr(i) for i in range(97, 97 + 26)] + [".", ",", "?", " "]
+FRAME_LENGTH = 255
+FRAME_STEP = 128
+
+# ----------------- ASR + GEC Functions -----------------
+def decode_audio(audio_binary):
+    audio, _ = tf.audio.decode_wav(audio_binary)
+    return tf.squeeze(audio, axis=-1)
+
+def get_spec_inference(filepath):
+    audio_binary = tf.io.read_file(filepath)
+    waveform = decode_audio(audio_binary)
+    waveform = tf.cast(waveform, tf.float32)
+    spectrogram = tf.signal.stft(waveform, frame_length=FRAME_LENGTH, frame_step=FRAME_STEP)
+    spectrogram = tf.abs(spectrogram)
+    return tf.expand_dims(spectrogram, axis=-1)
+
+def decode(y_pred):
+    batch_size = tf.shape(y_pred)[0]
+    pred_length = tf.shape(y_pred)[1]
+    pred_length *= tf.ones([batch_size], dtype=tf.int32)
+    y_pred = tf.one_hot(y_pred, len(vocabulary) + 1)
+    output = tf.keras.backend.ctc_decode(y_pred, input_length=pred_length, greedy=True)[0][0]
+    out = [vocabulary[i] for i in output[0]]
+    return ''.join(out)
+
+def correct_grammar_with_t5(text):
+    encoding = tokenizer(text, padding="max_length", max_length=256, truncation=True, return_tensors='pt')
+    input_ids = encoding['input_ids'].to(torch.device('cpu'))
+    outputs = t5_model.generate(input_ids, max_length=256, num_beams=8, do_sample=True, eos_token_id=tokenizer.eos_token_id)
+    corrected_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
     return corrected_text
 
-# Registration
-def register_user(username, password):
-    if os.path.exists("users.json"):
-        with open("users.json", "r") as f:
-            users = json.load(f)
-    else:
-        users = []
+# ----------------- Streamlit UI -----------------
+st.set_page_config(page_title="ASR + GEC App", layout="centered")
 
-    users.append({"username": username, "password": password})
+# Initialize session state
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
+    st.session_state.username = ""
 
-    with open("users.json", "w") as f:
-        json.dump(users, f)
+# ----------------- Sidebar: Logout + Navigation -----------------
+st.sidebar.title("User Menu")
 
-# Login
-def login_user(username, password):
-    if os.path.exists("users.json"):
-        with open("users.json", "r") as f:
-            users = json.load(f)
-        for user in users:
-            if user["username"] == username and user["password"] == password:
-                return True
-    return False
+if st.session_state.get("authenticated", False):
+    st.sidebar.write(f"👤 Logged in as: `{st.session_state.username}`")
+    if st.sidebar.button("Logout"):
+        st.session_state.authenticated = False
+        st.session_state.username = ""
+        st.success("You have been logged out.")
+        # Optional: Clean uploads
+        if os.path.exists("uploads"):
+            shutil.rmtree("uploads")
 
-# Streamlit UI
-def register_page():
-    st.title("Register")
-    new_user = st.text_input("New Username")
-    new_pass = st.text_input("New Password", type="password")
-    if st.button("Register"):
-        if new_user and new_pass:
-            register_user(new_user, new_pass)
-            st.success(f"User {new_user} registered successfully!")
-        else:
-            st.error("Please enter both username and password.")
+if st.session_state.get("authenticated", False):
+    menu = st.sidebar.selectbox("Navigation", ["App", "Feedback"])
+else:
+    menu = st.sidebar.selectbox("Navigation", ["Login", "Register"])
 
-def login_page():
-    st.title("Login")
+# ----------------- Login Page -----------------
+if menu == "Login":
+    st.header("🔐 Login")
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
     if st.button("Login"):
-        if login_user(username, password):
-            st.session_state.logged_in = True
-            st.success(f"Welcome back {username}!")
+        if authenticate(username, password):
+            st.success("✅ Logged in successfully.")
+            st.session_state.authenticated = True
+            st.session_state.username = username
         else:
-            st.error("Invalid username or password.")
+            st.error("❌ Invalid username or password.")
 
-def audio_processing_page():
-    st.title("Upload Audio for Transcription and GEC")
-    uploaded_audio = st.file_uploader("Choose an audio file", type=["wav", "mp3", "flac"])
-    
-    if uploaded_audio is not None:
-        temp_path = f"/tmp/{uploaded_audio.name}"
-        with open(temp_path, "wb") as f:
-            f.write(uploaded_audio.getbuffer())
-        
-        st.audio(temp_path)
-        st.write("📝 Transcribing...")
-        
-        # Step 1: Transcribe audio
-        transcription = transcribe_audio(temp_path)
-        st.write("**Transcription:**", transcription)
-        
-        # Step 2: Correct grammar of the transcription using T5
-        st.write("✏️ Correcting grammar...")
-        corrected_transcription = correct_grammar(transcription)
-        st.write("**Corrected Transcription:**", corrected_transcription)
-
-# Main page selection
-def main_page():
-    st.sidebar.title("Navigation")
-    menu = st.sidebar.radio("Select an Option", ["Login", "Register", "Upload Audio", "Logout"])
-
-    if menu == "Register":
-        register_page()
-    elif menu == "Login":
-        login_page()
-    elif menu == "Upload Audio":
-        if st.session_state.get("logged_in", False):
-            audio_processing_page()
+# ----------------- Register Page -----------------
+elif menu == "Register":
+    st.header("📝 Register")
+    username = st.text_input("Choose a Username")
+    password = st.text_input("Choose a Password", type="password")
+    if st.button("Register"):
+        if register_user(username, password):
+            st.success("✅ Registration successful! Please log in.")
         else:
-            st.warning("Please log in first.")
-    elif menu == "Logout":
-        st.session_state.logged_in = False
-        st.success("You have logged out successfully.")
+            st.error("❌ Username already exists.")
 
-# Set Streamlit page configuration
-st.set_page_config(page_title="Speech-to-Text and GEC", page_icon="📝", layout="wide")
+# ----------------- App Page -----------------
+elif menu == "App":
+    if not st.session_state.get("authenticated", False):
+        st.warning("⚠️ Please log in first.")
+    else:
+        st.title('🎤 ASR + T5 GEC: Audio Transcription and Grammar Correction')
+        uploaded_file = st.file_uploader("Upload an Audio File (WAV, MP3)", type=["wav", "mp3"])
 
-if __name__ == "__main__":
-    main_page()
+        if uploaded_file is not None:
+            file_path = os.path.join('uploads', uploaded_file.name)
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            with open(file_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+
+            st.info("⏳ Processing your audio file...")
+
+            spectrogram = get_spec_inference(file_path)
+            prediction = asr_model.predict(tf.expand_dims(spectrogram, axis=0))
+            out = tf.argmax(prediction[0], axis=1)
+            decoded_text = decode(tf.expand_dims(out, axis=0))
+
+            st.subheader("🗣️ Transcription:")
+            st.write(decoded_text)
+
+            corrected_text = correct_grammar_with_t5(decoded_text)
+            st.subheader("📝 Corrected Text:")
+            st.write(corrected_text)
+
+            log_file_info(st.session_state.username, uploaded_file.name, decoded_text, corrected_text)
+
+# ----------------- Feedback Page -----------------
+elif menu == "Feedback":
+    if not st.session_state.get("authenticated", False):
+        st.warning("⚠️ Please log in first.")
+    else:
+        st.header("💬 Feedback")
+        feedback_text = st.text_area("Write your feedback below:")
+        if st.button("Submit Feedback"):
+            if feedback_text.strip():
+                log_feedback(st.session_state.username, feedback_text.strip())
+                st.success("🙏 Thank you for your feedback!")
+            else:
+                st.error("❌ Feedback cannot be empty.")
