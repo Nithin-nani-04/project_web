@@ -1,33 +1,35 @@
 import streamlit as st
 import torch
 import json
-import soundfile as sf
-from transformers import Speech2TextProcessor, Speech2TextForConditionalGeneration
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 import os
 import uuid
+import soundfile as sf
+from transformers import Wav2Vec2ForCTC, Wav2Vec2Tokenizer
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
-# Load ASR Model
-asr_model = Speech2TextForConditionalGeneration.from_pretrained("facebook/s2t-large-librispeech-asr")
-asr_processor = Speech2TextProcessor.from_pretrained("facebook/s2t-large-librispeech-asr")
-
-# Load GEC Model
-gec_model = AutoModelForSeq2SeqLM.from_pretrained("gotutiyan/gec-t5-base-clang8")
-gec_tokenizer = AutoTokenizer.from_pretrained("gotutiyan/gec-t5-base-clang8")
-
-# User credentials and data
+# --- File paths ---
 USERS_FILE = "users.json"
 DATA_FILE = "file.json"
+os.makedirs("audio", exist_ok=True)
 
-def load_json(filename):
-    if os.path.exists(filename):
-        with open(filename, 'r') as f:
-            return json.load(f)
-    return {}
+# --- Load Models ---
+@st.cache_resource
+def load_models():
+    asr_model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-large-960h")
+    asr_tokenizer = Wav2Vec2Tokenizer.from_pretrained("facebook/wav2vec2-large-960h")
+    gec_model = AutoModelForSeq2SeqLM.from_pretrained("gotutiyan/gec-t5-base-clang8")
+    gec_tokenizer = AutoTokenizer.from_pretrained("gotutiyan/gec-t5-base-clang8")
+    return asr_model, asr_tokenizer, gec_model, gec_tokenizer
 
-def save_json(filename, data):
-    with open(filename, 'w') as f:
-        json.dump(data, f, indent=4)
+asr_model, asr_tokenizer, gec_model, gec_tokenizer = load_models()
+
+# --- Utils ---
+def load_json(path):
+    return json.load(open(path)) if os.path.exists(path) else {}
+
+def save_json(path, data):
+    with open(path, 'w') as f:
+        json.dump(data, f, indent=2)
 
 def register_user(username, password):
     users = load_json(USERS_FILE)
@@ -37,72 +39,70 @@ def register_user(username, password):
     save_json(USERS_FILE, users)
     return True
 
-def authenticate_user(username, password):
+def authenticate(username, password):
     users = load_json(USERS_FILE)
     return users.get(username) == password
 
-def transcribe_audio(audio_path):
-    speech, _ = sf.read(audio_path)
-    input_features = asr_processor(speech, sampling_rate=16000, return_tensors="pt").input_features
-    generated_ids = asr_model.generate(input_features)
-    transcription = asr_processor.batch_decode(generated_ids)[0]
-    return transcription
+def transcribe_audio(path):
+    speech, _ = sf.read(path)
+    input_values = asr_tokenizer(speech, return_tensors="pt", padding="longest").input_values
+    with torch.no_grad():
+        logits = asr_model(input_values).logits
+    predicted_ids = torch.argmax(logits, dim=-1)
+    return asr_tokenizer.batch_decode(predicted_ids)[0]
 
 def correct_text(text):
-    inputs = gec_tokenizer.encode(text, return_tensors="pt")
-    outputs = gec_model.generate(inputs, max_length=128, num_beams=5, early_stopping=True)
-    corrected = gec_tokenizer.decode(outputs[0], skip_special_tokens=True)
-    return corrected
+    inputs = gec_tokenizer(text, return_tensors="pt")
+    with torch.no_grad():
+        outputs = gec_model.generate(**inputs, max_length=128)
+    return gec_tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-# Streamlit UI
-st.title("ASR + GEC Web App")
+# --- Streamlit UI ---
+st.title("ASR + Grammar Correction App (Local Models)")
 
-# Login/Register
-auth_mode = st.sidebar.selectbox("Login / Register", ["Login", "Register"])
+auth_choice = st.sidebar.radio("Choose", ["Login", "Register"])
 username = st.sidebar.text_input("Username")
 password = st.sidebar.text_input("Password", type="password")
 
-if auth_mode == "Register":
+if auth_choice == "Register":
     if st.sidebar.button("Register"):
         if register_user(username, password):
-            st.sidebar.success("Registered successfully. Please log in.")
+            st.success("User registered!")
         else:
-            st.sidebar.error("Username already exists.")
+            st.error("Username already exists.")
 
-elif auth_mode == "Login":
+elif auth_choice == "Login":
     if st.sidebar.button("Login"):
-        if authenticate_user(username, password):
-            st.session_state["logged_in"] = True
-            st.session_state["username"] = username
+        if authenticate(username, password):
+            st.session_state["user"] = username
+            st.success(f"Welcome {username}!")
         else:
-            st.sidebar.error("Invalid credentials.")
+            st.error("Invalid credentials.")
 
-if st.session_state.get("logged_in"):
-    st.success(f"Welcome, {st.session_state['username']}!")
-
-    uploaded_file = st.file_uploader("Upload an audio file (WAV)", type=["wav"])
-    if uploaded_file:
+# --- Main App After Login ---
+if "user" in st.session_state:
+    st.subheader("Upload a WAV audio file for transcription and correction:")
+    uploaded = st.file_uploader("Audio File", type=["wav"])
+    if uploaded:
         file_id = str(uuid.uuid4())
         file_path = f"audio/{file_id}.wav"
-        os.makedirs("audio", exist_ok=True)
         with open(file_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
+            f.write(uploaded.read())
 
+        st.info("Transcribing...")
         transcription = transcribe_audio(file_path)
-        st.subheader("ASR Transcription")
-        st.write(transcription)
+        st.write("**Transcription:**", transcription)
 
+        st.info("Correcting grammar...")
         corrected = correct_text(transcription)
-        st.subheader("Grammatical Error Correction")
-        st.write(corrected)
+        st.write("**Corrected Text:**", corrected)
 
-        # Save input/output data
-        data_log = load_json(DATA_FILE)
-        if username not in data_log:
-            data_log[username] = []
-        data_log[username].append({
-            "original_transcription": transcription,
-            "corrected_text": corrected,
-            "file": uploaded_file.name
+        # Save to data log
+        log = load_json(DATA_FILE)
+        log.setdefault(st.session_state["user"], []).append({
+            "file": uploaded.name,
+            "transcription": transcription,
+            "corrected": corrected
         })
-        save_json(DATA_FILE, data_log)
+        save_json(DATA_FILE, log)
+        st.success("Data saved.")
