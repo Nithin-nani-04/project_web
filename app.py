@@ -1,27 +1,24 @@
-import streamlit as st
 import torch
 from transformers import Wav2Vec2Processor, Wav2Vec2ForCTC, AutoTokenizer, AutoModelForSeq2SeqLM
 import soundfile as sf
 import os
 import json
-import re
 
-# Check if CUDA (GPU) is available, otherwise use CPU
+# Check if CUDA is available, otherwise use CPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {device}")
 
-# Load Wav2Vec2 model and processor for ASR (speech-to-text) and move to the correct device
-processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-large-960h")
-model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-large-960h").to(device)
+# Load Wav2Vec2 model and processor for ASR (speech-to-text)
+processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base-960h")
+model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-base-960h").to(device)  # Move model to the device
 
-# Load T5 model and tokenizer for Grammar Error Correction (GEC) and move to the correct device
+# Load T5 model and tokenizer for Grammar Error Correction (GEC)
 tokenizer = AutoTokenizer.from_pretrained("gotutiyan/gec-t5-base-clang8")
-gec_model = AutoModelForSeq2SeqLM.from_pretrained("gotutiyan/gec-t5-base-clang8").to(device)
+gec_model = AutoModelForSeq2SeqLM.from_pretrained("gotutiyan/gec-t5-base-clang8").to(device)  # Move model to the device
 
 # Utility function to transcribe audio (ASR)
 def transcribe_audio(file_path):
     speech, _ = sf.read(file_path)
-    input_values = processor(speech, return_tensors="pt").input_values.to(device)  # Move to correct device
+    input_values = processor(speech, return_tensors="pt").input_values.to(device)  # Move input tensor to device
     with torch.no_grad():
         logits = model(input_values).logits
     predicted_ids = torch.argmax(logits, dim=-1)
@@ -31,8 +28,7 @@ def transcribe_audio(file_path):
 # Utility function to correct grammar (GEC) using T5
 def correct_grammar(text):
     input_text = "grammar: " + text  # Adding task prefix for GEC
-    inputs = tokenizer(input_text, return_tensors="pt", max_length=512, truncation=True)
-    inputs = {key: value.to(device) for key, value in inputs.items()}  # Move to correct device
+    inputs = tokenizer(input_text, return_tensors="pt", max_length=512, truncation=True).to(device)  # Move input tensor to device
     with torch.no_grad():
         outputs = gec_model.generate(**inputs, max_length=512)
     corrected_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
@@ -60,52 +56,6 @@ def login_user(username, password):
             if user["username"] == username and user["password"] == password:
                 return True
     return False
-
-# Feedback Validation
-def is_valid_email(email):
-    return re.match(r"[^@]+@[^@]+\.[^@]+", email)
-
-def is_valid_phone(phone):
-    return re.match(r"^\d{10}$", phone)  # Simple 10-digit validation
-
-# Save feedback to JSON
-def save_feedback_extended(name, email, phone, feedback):
-    feedback_data = {
-        "name": name,
-        "email": email,
-        "phone": phone,
-        "feedback": feedback
-    }
-    with open("feedback.json", "a") as f:
-        f.write(json.dumps(feedback_data) + "\n")
-
-# Streamlit UI for feedback
-def feedback_page():
-    st.subheader("💬 Submit Feedback")
-
-    name = st.text_input("Full Name")
-    email = st.text_input("Email Address")
-    phone = st.text_input("Phone Number")
-    feedback = st.text_area("Your Feedback", height=150)
-
-    if st.button("Submit Feedback"):
-        errors = []
-
-        if not name.strip():
-            errors.append("Name is required.")
-        if not is_valid_email(email):
-            errors.append("Invalid email format.")
-        if not is_valid_phone(phone):
-            errors.append("Phone number must be exactly 10 digits.")
-        if not feedback.strip():
-            errors.append("Feedback cannot be empty.")
-
-        if errors:
-            for error in errors:
-                st.error(error)
-        else:
-            save_feedback_extended(name, email, phone, feedback)
-            st.success("✅ Thank you! Your feedback has been submitted.")
 
 # Streamlit UI for registration
 def register_page():
@@ -153,57 +103,23 @@ def audio_processing_page():
         corrected_transcription = correct_grammar(transcription)
         st.write("**Corrected Transcription:**", corrected_transcription)
 
-# Displaying Model Details
-def display_model_details():
-    st.markdown("### Model Details")
-
-    st.subheader("Wav2Vec2 (ASR Model)")
-    st.write(
-        """
-        - **Model Name**: Wav2Vec2 (Large 960 hours)
-        - **Task**: Automatic Speech Recognition (ASR)
-        - **Description**: Wav2Vec2 is a deep learning model developed by Facebook AI that performs automatic speech recognition.
-        - **Pretrained On**: 960 hours of English speech data.
-        - **Input**: Raw audio waveform.
-        - **Output**: Transcribed text.
-        """
-    )
-    
-    st.subheader("T5 (Grammar Error Correction Model)")
-    st.write(
-        """
-        - **Model Name**: T5 (Text-to-Text Transfer Transformer)
-        - **Task**: Grammar Error Correction (GEC)
-        - **Description**: T5 is a transformer-based model capable of various text generation tasks, including grammar correction.
-        - **Input**: Transcribed text.
-        - **Output**: Corrected text with grammar improvements.
-        """
-    )
-
 # Main page selection
 def main_page():
-    if 'logged_in' not in st.session_state:
-        st.session_state.logged_in = False
-
     st.sidebar.title("Navigation")
-    if st.session_state.logged_in:
-        menu = st.sidebar.radio("Select an Option", ["Upload Audio", "Feedback", "Logout", "Model Details"])
-    else:
-        menu = st.sidebar.radio("Select an Option", ["Login", "Register"])
+    menu = st.sidebar.radio("Select an Option", ["Login", "Register", "Upload Audio", "Logout"])
 
     if menu == "Register":
         register_page()
     elif menu == "Login":
         login_page()
     elif menu == "Upload Audio":
-        audio_processing_page()
-    elif menu == "Feedback":
-        feedback_page()
+        if st.session_state.get("logged_in", False):
+            audio_processing_page()
+        else:
+            st.warning("Please log in first.")
     elif menu == "Logout":
         st.session_state.logged_in = False
         st.success("You have logged out successfully.")
-    elif menu == "Model Details":
-        display_model_details()
 
 # Set Streamlit page configuration
 st.set_page_config(page_title="Speech-to-Text and GEC", page_icon="📝", layout="wide")
