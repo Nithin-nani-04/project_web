@@ -4,3 +4,4 @@ transformers
 torchaudio
 soundfile
 sentencepiece
+ffmpeg-python
