@@ -1,25 +1,29 @@
+import os
+os.environ["PYTORCH_NO_LAZY_INIT"] = "1"  # Prevent meta-device loading
+
 import streamlit as st
 import torch
 from transformers import Wav2Vec2Processor, Wav2Vec2ForCTC, AutoTokenizer, AutoModelForSeq2SeqLM
 import soundfile as sf
-import os
 import json
 
 st.set_page_config(page_title="🎙️ Voice GEC App", layout="wide")
 
-# ---------------------- Model Setup ---------------------- #
+# Load models (Wav2Vec2 and GEC)
+ASR_MODEL_NAME = "jonatasgrosman/wav2vec2-large-xlsr-53-english"
+GEC_MODEL_NAME = "gotutiyan/gec-t5-base-clang8"
 
-# ASR Model: Wav2Vec2
-asr_model_name = "jonatasgrosman/wav2vec2-large-xlsr-53-english"
-processor = Wav2Vec2Processor.from_pretrained(asr_model_name)
-asr_model = Wav2Vec2ForCTC.from_pretrained(asr_model_name).to('cpu')
+@st.cache_resource
+def load_models():
+    processor = Wav2Vec2Processor.from_pretrained(ASR_MODEL_NAME)
+    asr_model = Wav2Vec2ForCTC.from_pretrained(ASR_MODEL_NAME)
+    tokenizer = AutoTokenizer.from_pretrained(GEC_MODEL_NAME)
+    gec_model = AutoModelForSeq2SeqLM.from_pretrained(GEC_MODEL_NAME)
+    return processor, asr_model, tokenizer, gec_model
 
-# Grammar Correction Model
-gec_model_name = "gotutiyan/gec-t5-base-clang8"
-tokenizer = AutoTokenizer.from_pretrained(gec_model_name)
-gec_model = AutoModelForSeq2SeqLM.from_pretrained(gec_model_name).to('cpu')
+processor, asr_model, tokenizer, gec_model = load_models()
 
-# ---------------------- Utility Functions ---------------------- #
+# ---------------- Utility Functions ---------------- #
 
 def transcribe_audio(file_path):
     speech, _ = sf.read(file_path)
@@ -56,20 +60,12 @@ def login_user(username, password):
                 return True
     return False
 
-# ---------------------- Pages ---------------------- #
+# ---------------- UI Pages ---------------- #
 
 def home_page():
-    st.markdown("## 👋 Welcome to **Voice GEC** — Speech-to-Text with Grammar Correction")
-    if st.session_state.logged_in:
-        st.success(f"🎉 Logged in as **{st.session_state.username}**")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("### 🎤 Audio Upload")
-        st.markdown("Upload audio, and get grammatically corrected text instantly!")
-    with col2:
-        st.markdown("### 🧠 Powered by AI")
-        st.markdown("- ASR: Wav2Vec2 fine-tuned on English\n- GEC: T5 trained on code-corrected data")
-    st.info("Use the sidebar to **register**, **log in**, and start transcribing audio!")
+    st.title("🎙️ Voice Grammar Correction App")
+    st.markdown("Convert your speech into grammatically correct text using AI.")
+    st.info("Use the sidebar to log in, register, or upload your audio.")
 
 def register_page():
     st.markdown("### 📝 Register")
@@ -80,7 +76,7 @@ def register_page():
             register_user(new_user, new_pass)
             st.success(f"User **{new_user}** registered successfully!")
         else:
-            st.error("Please enter both username and password.")
+            st.error("Both fields are required.")
 
 def login_page():
     st.markdown("### 🔐 Login")
@@ -92,91 +88,54 @@ def login_page():
             st.session_state.username = username
             st.success(f"Welcome back, **{username}**!")
         else:
-            st.error("Invalid credentials.")
+            st.error("Invalid username or password.")
 
 def audio_processing_page():
-    st.markdown("### 🎧 Upload Audio File")
-    uploaded_audio = st.file_uploader("Choose an audio file", type=["wav", "mp3", "flac"])
+    st.markdown("### 🎧 Upload Your Audio File")
+    uploaded_audio = st.file_uploader("Choose an audio file", type=["wav", "flac", "mp3"])
     
     if uploaded_audio:
         temp_path = f"/tmp/{uploaded_audio.name}"
         with open(temp_path, "wb") as f:
             f.write(uploaded_audio.read())
 
-        st.audio(temp_path)
-        with st.spinner("📝 Transcribing..."):
+        st.audio(temp_path, format="audio/wav")
+
+        with st.spinner("🔍 Transcribing..."):
             transcription = transcribe_audio(temp_path)
-        st.success("✅ Transcription complete!")
-        st.code(transcription, language="text")
+        st.success("✅ Transcription Complete")
+        st.markdown(f"**Transcript:** `{transcription}`")
 
         with st.spinner("✏️ Correcting grammar..."):
             corrected = correct_grammar(transcription)
-        st.success("✅ Grammar correction complete!")
-        st.code(corrected, language="text")
-
-        # Feedback
-        st.markdown("### 📢 Feedback")
-        rating = st.slider("How accurate was the output?", 1, 5, value=4)
-        comment = st.text_area("Any suggestions or feedback?")
-        if st.button("Submit Feedback"):
-            st.session_state.feedbacks.append({
-                "user": st.session_state.username,
-                "rating": rating,
-                "comment": comment,
-                "transcription": transcription,
-                "corrected": corrected
-            })
-            st.success("🙏 Thanks for your feedback!")
+        st.success("✅ Grammar Correction Complete")
+        st.markdown(f"**Corrected Text:** `{corrected}`")
 
 def logout_page():
     st.session_state.logged_in = False
     st.session_state.username = ""
-    st.success("You have been logged out.")
+    st.success("🚪 You have logged out.")
 
-def feedback_dashboard():
-    st.markdown("### 📊 Feedback Dashboard")
-    if st.session_state.feedbacks:
-        for idx, entry in enumerate(st.session_state.feedbacks[::-1]):
-            st.markdown(f"**User:** {entry['user']}")
-            st.markdown(f"**Rating:** ⭐ {entry['rating']} / 5")
-            if entry["comment"]:
-                st.markdown(f"**Feedback:** _{entry['comment']}_")
-            st.markdown("**Transcript:**")
-            st.code(entry['transcription'], language="text")
-            st.markdown("**Corrected:**")
-            st.code(entry['corrected'], language="text")
-            st.markdown("---")
-    else:
-        st.info("No feedback submitted yet.")
-
-# ---------------------- Main App ---------------------- #
+# ---------------- Main App ---------------- #
 
 def main():
     if "logged_in" not in st.session_state:
         st.session_state.logged_in = False
         st.session_state.username = ""
-    if "feedbacks" not in st.session_state:
-        st.session_state.feedbacks = []
 
     st.sidebar.image("https://img.icons8.com/ios-filled/100/microphone.png", width=80)
     st.sidebar.title("📌 Navigation")
 
     if st.session_state.logged_in:
-        if st.session_state.username == "admin":
-            menu = st.sidebar.radio("Choose an option:", ["🏠 Home", "🎤 Upload Audio", "📊 Feedback", "🚪 Logout"])
-        else:
-            menu = st.sidebar.radio("Choose an option:", ["🏠 Home", "🎤 Upload Audio", "🚪 Logout"])
-
+        menu = st.sidebar.radio("Menu", ["🏠 Home", "🎤 Upload Audio", "🚪 Logout"])
         if menu == "🏠 Home":
             home_page()
         elif menu == "🎤 Upload Audio":
             audio_processing_page()
-        elif menu == "📊 Feedback" and st.session_state.username == "admin":
-            feedback_dashboard()
         elif menu == "🚪 Logout":
             logout_page()
     else:
-        menu = st.sidebar.radio("Choose an option:", ["🏠 Home", "🔐 Login", "📝 Register"])
+        menu = st.sidebar.radio("Menu", ["🏠 Home", "🔐 Login", "📝 Register"])
         if menu == "🏠 Home":
             home_page()
         elif menu == "🔐 Login":
