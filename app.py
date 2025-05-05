@@ -4,26 +4,19 @@ from transformers import Wav2Vec2Processor, Wav2Vec2ForCTC, AutoTokenizer, AutoM
 import soundfile as sf
 import os
 import json
-import re
-
-# Set Streamlit page configuration (MUST be at the top)
-st.set_page_config(page_title="Speech-to-Text and GEC", page_icon="📝", layout="wide")
-
-# Check if CUDA is available, otherwise use CPU
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Load Wav2Vec2 model and processor for ASR (speech-to-text)
-processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base-960h")
-model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-base-960h").to(device)  # Move model to the device
+processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-large-960h")
+model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-large-960h")
 
 # Load T5 model and tokenizer for Grammar Error Correction (GEC)
 tokenizer = AutoTokenizer.from_pretrained("gotutiyan/gec-t5-base-clang8")
-gec_model = AutoModelForSeq2SeqLM.from_pretrained("gotutiyan/gec-t5-base-clang8").to(device)  # Move model to the device
+gec_model = AutoModelForSeq2SeqLM.from_pretrained("gotutiyan/gec-t5-base-clang8")
 
 # Utility function to transcribe audio (ASR)
 def transcribe_audio(file_path):
     speech, _ = sf.read(file_path)
-    input_values = processor(speech, return_tensors="pt").input_values.to(device)  # Move input tensor to device
+    input_values = processor(speech, return_tensors="pt").input_values
     with torch.no_grad():
         logits = model(input_values).logits
     predicted_ids = torch.argmax(logits, dim=-1)
@@ -33,7 +26,7 @@ def transcribe_audio(file_path):
 # Utility function to correct grammar (GEC) using T5
 def correct_grammar(text):
     input_text = "grammar: " + text  # Adding task prefix for GEC
-    inputs = tokenizer(input_text, return_tensors="pt", max_length=512, truncation=True).to(device)  # Move input tensor to device
+    inputs = tokenizer(input_text, return_tensors="pt", max_length=512, truncation=True)
     with torch.no_grad():
         outputs = gec_model.generate(**inputs, max_length=512)
     corrected_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
@@ -125,6 +118,9 @@ def main_page():
     elif menu == "Logout":
         st.session_state.logged_in = False
         st.success("You have logged out successfully.")
+
+# Set Streamlit page configuration
+st.set_page_config(page_title="Speech-to-Text and GEC", page_icon="📝", layout="wide")
 
 if __name__ == "__main__":
     main_page()
