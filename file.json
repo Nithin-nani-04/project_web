@@ -1,1 +1,9 @@
-{}
+{
+  "john": [
+    {
+      "file": "example.wav",
+      "transcription": "I am going to the market",
+      "corrected": "I am going to the market."
+    }
+  ]
+}
