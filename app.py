@@ -8,9 +8,13 @@ import json
 st.set_page_config(page_title="🎙️ Voice GEC App", layout="wide")
 
 # Load ASR model
-processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-large-960h")
-asr_model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-large-960h")
+from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
 
+# Recommended fine-tuned model
+model_name = "jonatasgrosman/wav2vec2-large-xlsr-53-english"
+
+processor = Wav2Vec2Processor.from_pretrained(model_name)
+asr_model = Wav2Vec2ForCTC.from_pretrained(model_name)
 # Load GEC model
 tokenizer = AutoTokenizer.from_pretrained("gotutiyan/gec-t5-base-clang8")
 gec_model = AutoModelForSeq2SeqLM.from_pretrained("gotutiyan/gec-t5-base-clang8")
@@ -66,7 +70,7 @@ def home_page():
 
     with col2:
         st.markdown("### 🧠 Powered by AI")
-        st.markdown("- ASR: Wav2Vec2\n- GEC: T5 model")
+        st.markdown("- ASR: Hybrid ASR Model\n- GEC: T5 model")
     
     st.info("Use the sidebar to **register**, **log in**, and start transcribing audio!")
 
