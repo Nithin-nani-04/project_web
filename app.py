@@ -1,56 +1,51 @@
-import os
-os.environ["PYTORCH_NO_LAZY_INIT"] = "1"  # Prevent meta-device loading
-
 import streamlit as st
 import torch
 from transformers import Wav2Vec2Processor, Wav2Vec2ForCTC, AutoTokenizer, AutoModelForSeq2SeqLM
 import soundfile as sf
+import os
 import json
 
-st.set_page_config(page_title="🎙️ Voice GEC App", layout="wide")
+# Load Wav2Vec2 model and processor for ASR (speech-to-text)
+processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-large-960h")
+model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-large-960h")
 
-# Load models (Wav2Vec2 and GEC)
-ASR_MODEL_NAME = "jonatasgrosman/wav2vec2-large-xlsr-53-english"
-GEC_MODEL_NAME = "gotutiyan/gec-t5-base-clang8"
+# Load T5 model and tokenizer for Grammar Error Correction (GEC)
+tokenizer = AutoTokenizer.from_pretrained("gotutiyan/gec-t5-base-clang8")
+gec_model = AutoModelForSeq2SeqLM.from_pretrained("gotutiyan/gec-t5-base-clang8")
 
-@st.cache_resource
-def load_models():
-    processor = Wav2Vec2Processor.from_pretrained(ASR_MODEL_NAME)
-    asr_model = Wav2Vec2ForCTC.from_pretrained(ASR_MODEL_NAME)
-    tokenizer = AutoTokenizer.from_pretrained(GEC_MODEL_NAME)
-    gec_model = AutoModelForSeq2SeqLM.from_pretrained(GEC_MODEL_NAME)
-    return processor, asr_model, tokenizer, gec_model
-
-processor, asr_model, tokenizer, gec_model = load_models()
-
-# ---------------- Utility Functions ---------------- #
-
+# Utility function to transcribe audio (ASR)
 def transcribe_audio(file_path):
     speech, _ = sf.read(file_path)
-    input_values = processor(speech, return_tensors="pt", sampling_rate=16000).input_values
+    input_values = processor(speech, return_tensors="pt").input_values
     with torch.no_grad():
-        logits = asr_model(input_values).logits
+        logits = model(input_values).logits
     predicted_ids = torch.argmax(logits, dim=-1)
     transcription = processor.batch_decode(predicted_ids)
     return transcription[0]
 
+# Utility function to correct grammar (GEC) using T5
 def correct_grammar(text):
-    input_text = "grammar: " + text
-    inputs = tokenizer(input_text, return_tensors="pt", truncation=True, max_length=512)
+    input_text = "grammar: " + text  # Adding task prefix for GEC
+    inputs = tokenizer(input_text, return_tensors="pt", max_length=512, truncation=True)
     with torch.no_grad():
         outputs = gec_model.generate(**inputs, max_length=512)
-    return tokenizer.decode(outputs[0], skip_special_tokens=True)
+    corrected_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    return corrected_text
 
+# Registration
 def register_user(username, password):
     if os.path.exists("users.json"):
         with open("users.json", "r") as f:
             users = json.load(f)
     else:
         users = []
+
     users.append({"username": username, "password": password})
+
     with open("users.json", "w") as f:
         json.dump(users, f)
 
+# Login
 def login_user(username, password):
     if os.path.exists("users.json"):
         with open("users.json", "r") as f:
@@ -60,87 +55,72 @@ def login_user(username, password):
                 return True
     return False
 
-# ---------------- UI Pages ---------------- #
-
-def home_page():
-    st.title("🎙️ Voice Grammar Correction App")
-    st.markdown("Convert your speech into grammatically correct text using AI.")
-    st.info("Use the sidebar to log in, register, or upload your audio.")
-
+# Streamlit UI for registration
 def register_page():
-    st.markdown("### 📝 Register")
-    new_user = st.text_input("👤 Username")
-    new_pass = st.text_input("🔒 Password", type="password")
+    st.title("Register")
+    new_user = st.text_input("New Username")
+    new_pass = st.text_input("New Password", type="password")
     if st.button("Register"):
         if new_user and new_pass:
             register_user(new_user, new_pass)
-            st.success(f"User **{new_user}** registered successfully!")
+            st.success(f"User {new_user} registered successfully!")
         else:
-            st.error("Both fields are required.")
+            st.error("Please enter both username and password.")
 
+# Streamlit UI for login
 def login_page():
-    st.markdown("### 🔐 Login")
-    username = st.text_input("👤 Username")
-    password = st.text_input("🔒 Password", type="password")
+    st.title("Login")
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
     if st.button("Login"):
         if login_user(username, password):
             st.session_state.logged_in = True
-            st.session_state.username = username
-            st.success(f"Welcome back, **{username}**!")
+            st.success(f"Welcome back {username}!")
         else:
             st.error("Invalid username or password.")
 
+# Audio processing page (ASR and GEC)
 def audio_processing_page():
-    st.markdown("### 🎧 Upload Your Audio File")
-    uploaded_audio = st.file_uploader("Choose an audio file", type=["wav", "flac", "mp3"])
+    st.title("Upload Audio for Transcription and GEC")
+    uploaded_audio = st.file_uploader("Choose an audio file", type=["wav", "mp3", "flac"])
     
-    if uploaded_audio:
+    if uploaded_audio is not None:
         temp_path = f"/tmp/{uploaded_audio.name}"
         with open(temp_path, "wb") as f:
-            f.write(uploaded_audio.read())
+            f.write(uploaded_audio.getbuffer())
+        
+        st.audio(temp_path)
+        st.write("📝 Transcribing...")
+        
+        # Step 1: Transcribe audio
+        transcription = transcribe_audio(temp_path)
+        st.write("**Transcription:**", transcription)
+        
+        # Step 2: Correct grammar of the transcription using T5
+        st.write("✏️ Correcting grammar...")
+        corrected_transcription = correct_grammar(transcription)
+        st.write("**Corrected Transcription:**", corrected_transcription)
 
-        st.audio(temp_path, format="audio/wav")
+# Main page selection
+def main_page():
+    st.sidebar.title("Navigation")
+    menu = st.sidebar.radio("Select an Option", ["Login", "Register", "Upload Audio", "Logout"])
 
-        with st.spinner("🔍 Transcribing..."):
-            transcription = transcribe_audio(temp_path)
-        st.success("✅ Transcription Complete")
-        st.markdown(f"**Transcript:** `{transcription}`")
-
-        with st.spinner("✏️ Correcting grammar..."):
-            corrected = correct_grammar(transcription)
-        st.success("✅ Grammar Correction Complete")
-        st.markdown(f"**Corrected Text:** `{corrected}`")
-
-def logout_page():
-    st.session_state.logged_in = False
-    st.session_state.username = ""
-    st.success("🚪 You have logged out.")
-
-# ---------------- Main App ---------------- #
-
-def main():
-    if "logged_in" not in st.session_state:
-        st.session_state.logged_in = False
-        st.session_state.username = ""
-
-    st.sidebar.image("https://img.icons8.com/ios-filled/100/microphone.png", width=80)
-    st.sidebar.title("📌 Navigation")
-
-    if st.session_state.logged_in:
-        menu = st.sidebar.radio("Menu", ["🏠 Home", "🎤 Upload Audio", "🚪 Logout"])
-        if menu == "🏠 Home":
-            home_page()
-        elif menu == "🎤 Upload Audio":
+    if menu == "Register":
+        register_page()
+    elif menu == "Login":
+        login_page()
+    elif menu == "Upload Audio":
+        if st.session_state.get("logged_in", False):
             audio_processing_page()
-        elif menu == "🚪 Logout":
-            logout_page()
-    else:
-        menu = st.sidebar.radio("Menu", ["🏠 Home", "🔐 Login", "📝 Register"])
-        if menu == "🏠 Home":
-            home_page()
-        elif menu == "🔐 Login":
-            login_page()
-        elif menu == "📝 Register":
-            register_page()
+        else:
+            st.warning("Please log in first.")
+    elif menu == "Logout":
+        st.session_state.logged_in = False
+        st.success("You have logged out successfully.")
 
-main()
+# Set Streamlit page configuration
+st.set_page_config(page_title="Speech-to-Text and GEC", page_icon="📝", layout="wide")
+
+if __name__ == "__main__":
+    main_page()
