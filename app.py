@@ -5,49 +5,46 @@ import soundfile as sf
 import os
 import json
 
-# Set Streamlit page configuration for a better user interface
-st.set_page_config(page_title="Speech-to-Text and GEC", page_icon="🎙️", layout="wide")
+st.set_page_config(page_title="🎙️ Voice GEC App", layout="wide")
 
-# Load Wav2Vec2 model and processor for ASR (speech-to-text)
+# Load ASR model
 processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-large-960h")
-model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-large-960h")
+asr_model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-large-960h")
 
-# Load T5 model and tokenizer for Grammar Error Correction (GEC)
+# Load GEC model
 tokenizer = AutoTokenizer.from_pretrained("gotutiyan/gec-t5-base-clang8")
 gec_model = AutoModelForSeq2SeqLM.from_pretrained("gotutiyan/gec-t5-base-clang8")
 
-# Utility function to transcribe audio (ASR)
+# --------------------------- Utility Functions --------------------------- #
+
 def transcribe_audio(file_path):
     speech, _ = sf.read(file_path)
     input_values = processor(speech, return_tensors="pt").input_values
     with torch.no_grad():
-        logits = model(input_values).logits
+        logits = asr_model(input_values).logits
     predicted_ids = torch.argmax(logits, dim=-1)
     transcription = processor.batch_decode(predicted_ids)
     return transcription[0]
 
-# Utility function to correct grammar (GEC) using T5
 def correct_grammar(text):
-    input_text = "grammar: " + text  # Adding task prefix for GEC
-    inputs = tokenizer(input_text, return_tensors="pt", max_length=512, truncation=True)
+    input_text = "grammar: " + text
+    inputs = tokenizer(input_text, return_tensors="pt", truncation=True, max_length=512)
     with torch.no_grad():
         outputs = gec_model.generate(**inputs, max_length=512)
-    corrected_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    return corrected_text
+    return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-# Registration function with user data saved in JSON file
 def register_user(username, password):
     if os.path.exists("users.json"):
         with open("users.json", "r") as f:
             users = json.load(f)
     else:
         users = []
+
     users.append({"username": username, "password": password})
 
     with open("users.json", "w") as f:
         json.dump(users, f)
 
-# Login function
 def login_user(username, password):
     if os.path.exists("users.json"):
         with open("users.json", "r") as f:
@@ -57,93 +54,95 @@ def login_user(username, password):
                 return True
     return False
 
-# Streamlit UI for registration
-def register_page():
-    st.title("Create an Account")
-    new_user = st.text_input("Enter Username", placeholder="Choose a unique username")
-    new_pass = st.text_input("Enter Password", type="password", placeholder="Create a strong password")
+# --------------------------- Pages --------------------------- #
 
-    # Registration Button with an attractive design
-    if st.button("Register", key="register_button"):
+def home_page():
+    st.markdown("## 👋 Welcome to **Voice GEC** — Speech-to-Text with Grammar Correction")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("### 🎤 Audio Upload")
+        st.markdown("Upload audio, and get grammatically corrected text output instantly!")
+
+    with col2:
+        st.markdown("### 🧠 Powered by AI")
+        st.markdown("- ASR: Wav2Vec2\n- GEC: T5 model")
+    
+    st.info("Use the sidebar to **register**, **log in**, and start transcribing audio!")
+
+def register_page():
+    st.markdown("### 📝 Register")
+    new_user = st.text_input("👤 Username")
+    new_pass = st.text_input("🔒 Password", type="password")
+    if st.button("Register"):
         if new_user and new_pass:
             register_user(new_user, new_pass)
-            st.success(f"Account created successfully for {new_user}!", icon="✅")
+            st.success(f"User **{new_user}** registered successfully!")
         else:
-            st.error("Both fields are required to register.", icon="❌")
+            st.error("Please enter both username and password.")
 
-# Streamlit UI for login
 def login_page():
-    st.title("Login to Your Account")
-    username = st.text_input("Username", placeholder="Enter your username")
-    password = st.text_input("Password", type="password", placeholder="Enter your password")
-
-    # Login Button with visual improvements
-    if st.button("Login", key="login_button"):
+    st.markdown("### 🔐 Login")
+    username = st.text_input("👤 Username")
+    password = st.text_input("🔒 Password", type="password")
+    if st.button("Login"):
         if login_user(username, password):
             st.session_state.logged_in = True
-            st.success(f"Welcome back {username}!", icon="✅")
+            st.session_state.username = username
+            st.success(f"Welcome back, **{username}**!")
         else:
-            st.error("Invalid username or password. Please try again.", icon="❌")
+            st.error("Invalid credentials.")
 
-# Audio processing page (ASR and GEC)
 def audio_processing_page():
-    st.title("Upload Audio for Transcription and Grammar Correction")
+    st.markdown("### 🎧 Upload Audio File")
+    uploaded_audio = st.file_uploader("Choose an audio file", type=["wav", "mp3", "flac"])
     
-    # File uploader with interactive widget and tooltip
-    uploaded_audio = st.file_uploader("Choose an audio file (wav, mp3, or flac)", type=["wav", "mp3", "flac"],
-                                      help="Upload a clear audio file for transcription and grammar correction.")
-    
-    if uploaded_audio is not None:
+    if uploaded_audio:
         temp_path = f"/tmp/{uploaded_audio.name}"
         with open(temp_path, "wb") as f:
-            f.write(uploaded_audio.getbuffer())
-        
-        st.audio(temp_path, format="audio/wav")
-        st.write("📝 Transcribing audio, please wait...")
+            f.write(uploaded_audio.read())
 
-        # Display loading spinner while transcription is happening
-        with st.spinner("Processing..."):
+        st.audio(temp_path)
+        with st.spinner("📝 Transcribing..."):
             transcription = transcribe_audio(temp_path)
+        st.success("✅ Transcription complete!")
+        st.markdown(f"**Transcript:** `{transcription}`")
 
-        st.write("**Transcription:**", transcription)
+        with st.spinner("✏️ Correcting grammar..."):
+            corrected = correct_grammar(transcription)
+        st.success("✅ Grammar correction complete!")
+        st.markdown(f"**Corrected Text:** `{corrected}`")
 
-        # Grammar correction
-        st.write("✏️ Correcting grammar...")
-        with st.spinner("Correcting..."):
-            corrected_transcription = correct_grammar(transcription)
-        st.write("**Corrected Transcription:**", corrected_transcription)
+def logout_page():
+    st.session_state.logged_in = False
+    st.session_state.username = ""
+    st.success("You have been logged out.")
 
-# Main page selection
-def main_page():
-    # Sidebar with more visually appealing navigation
-    st.sidebar.title("Navigation")
-    menu = st.sidebar.radio("Select an Option", ["Login", "Register", "Upload Audio", "Logout"], index=0)
+# --------------------------- Main App --------------------------- #
 
-    if menu == "Register":
-        register_page()
-    elif menu == "Login":
-        login_page()
-    elif menu == "Upload Audio":
-        if st.session_state.get("logged_in", False):
-            audio_processing_page()
-        else:
-            st.warning("Please log in first to upload an audio file.")
-    elif menu == "Logout":
-        st.session_state.logged_in = False
-        st.success("You have successfully logged out.", icon="✅")
-
-# Footer with credits
-def footer():
-    st.markdown("""
-        ---
-        Created with ❤️ by AIML-10.
-        """)
-
-# Call the main page function to initialize the app
-if __name__ == "__main__":
-    # Ensure the session state is initialized correctly
+def main():
     if "logged_in" not in st.session_state:
         st.session_state.logged_in = False
+        st.session_state.username = ""
 
-    main_page()
-    footer()
+    st.sidebar.image("https://img.icons8.com/ios-filled/100/microphone.png", width=80)
+    st.sidebar.title("📌 Navigation")
+
+    if st.session_state.logged_in:
+        menu = st.sidebar.radio("Choose an option:", ["🏠 Home", "🎤 Upload Audio", "🚪 Logout"])
+        if menu == "🏠 Home":
+            home_page()
+        elif menu == "🎤 Upload Audio":
+            audio_processing_page()
+        elif menu == "🚪 Logout":
+            logout_page()
+    else:
+        menu = st.sidebar.radio("Choose an option:", ["🏠 Home", "🔐 Login", "📝 Register"])
+        if menu == "🏠 Home":
+            home_page()
+        elif menu == "🔐 Login":
+            login_page()
+        elif menu == "📝 Register":
+            register_page()
+
+main()
