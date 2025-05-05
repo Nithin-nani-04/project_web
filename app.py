@@ -6,18 +6,22 @@ import os
 import json
 import re
 
-# Load Wav2Vec2 model and processor for ASR (speech-to-text)
-processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-large-960h")
-model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-large-960h")
+# Check if CUDA (GPU) is available, otherwise use CPU
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
 
-# Load T5 model and tokenizer for Grammar Error Correction (GEC)
+# Load Wav2Vec2 model and processor for ASR (speech-to-text) and move to the correct device
+processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-large-960h")
+model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-large-960h").to(device)
+
+# Load T5 model and tokenizer for Grammar Error Correction (GEC) and move to the correct device
 tokenizer = AutoTokenizer.from_pretrained("gotutiyan/gec-t5-base-clang8")
-gec_model = AutoModelForSeq2SeqLM.from_pretrained("gotutiyan/gec-t5-base-clang8")
+gec_model = AutoModelForSeq2SeqLM.from_pretrained("gotutiyan/gec-t5-base-clang8").to(device)
 
 # Utility function to transcribe audio (ASR)
 def transcribe_audio(file_path):
     speech, _ = sf.read(file_path)
-    input_values = processor(speech, return_tensors="pt").input_values
+    input_values = processor(speech, return_tensors="pt").input_values.to(device)  # Move to correct device
     with torch.no_grad():
         logits = model(input_values).logits
     predicted_ids = torch.argmax(logits, dim=-1)
@@ -28,6 +32,7 @@ def transcribe_audio(file_path):
 def correct_grammar(text):
     input_text = "grammar: " + text  # Adding task prefix for GEC
     inputs = tokenizer(input_text, return_tensors="pt", max_length=512, truncation=True)
+    inputs = {key: value.to(device) for key, value in inputs.items()}  # Move to correct device
     with torch.no_grad():
         outputs = gec_model.generate(**inputs, max_length=512)
     corrected_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
@@ -155,10 +160,10 @@ def display_model_details():
     st.subheader("Wav2Vec2 (ASR Model)")
     st.write(
         """
-        - **Model Name**: Hybrid ASR Model
+        - **Model Name**: Wav2Vec2 (Large 960 hours)
         - **Task**: Automatic Speech Recognition (ASR)
-        - **Description**: Wav2Vec2 is a deep learning model that performs automatic speech recognition.
-        - **Pretrained On**: 24 hours of English speech data.
+        - **Description**: Wav2Vec2 is a deep learning model developed by Facebook AI that performs automatic speech recognition.
+        - **Pretrained On**: 960 hours of English speech data.
         - **Input**: Raw audio waveform.
         - **Output**: Transcribed text.
         """
