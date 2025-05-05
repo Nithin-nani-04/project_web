@@ -6,6 +6,8 @@ import whisper
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
 # ----------------- Config ------------------
+st.set_page_config(page_title="ASR + GEC App", layout="centered")  # Set page config as the very first command
+
 USERS_FILE = "users.json"
 DATA_FILE = "file.json"
 
@@ -69,17 +71,24 @@ def save_data(username, filename, transcription, corrected_text):
     with open(DATA_FILE, "w") as f:
         json.dump(data, f, indent=4)
 
-# ----------------- UI: Login & Registration ------------------
-st.set_page_config("ASR + GEC App", layout="centered")
-st.title("🔊 Speech-to-Text & Grammar Correction")
+# ----------------- Pages ------------------
 
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-    st.session_state.username = None
+# Login Page
+def login_page():
+    st.subheader("🔓 Login")
+    user = st.text_input("Username")
+    passwd = st.text_input("Password", type="password")
+    if st.button("Login"):
+        if authenticate_user(user, passwd):
+            st.session_state.logged_in = True
+            st.session_state.username = user
+            st.success(f"Welcome, {user}!")
+            st.experimental_rerun()
+        else:
+            st.error("Invalid credentials.")
 
-menu = st.sidebar.radio("Menu", ["Login", "Register", "Logout" if st.session_state.logged_in else None])
-
-if menu == "Register":
+# Registration Page
+def register_page():
     st.subheader("🔐 Register")
     new_user = st.text_input("Username")
     new_pass = st.text_input("Password", type="password")
@@ -89,27 +98,9 @@ if menu == "Register":
         else:
             st.error("Username already exists.")
 
-elif menu == "Login":
-    st.subheader("🔓 Login")
-    user = st.text_input("Username")
-    passwd = st.text_input("Password", type="password")
-    if st.button("Login"):
-        if authenticate_user(user, passwd):
-            st.session_state.logged_in = True
-            st.session_state.username = user
-            st.success(f"Welcome, {user}!")
-        else:
-            st.error("Invalid credentials.")
-
-elif menu == "Logout":
-    st.session_state.logged_in = False
-    st.session_state.username = None
-    st.success("Logged out!")
-
-# ----------------- Main App ------------------
-if st.session_state.logged_in:
-    st.markdown(f"👋 Hello, **{st.session_state.username}**")
-
+# Audio Processing Page
+def audio_processing_page():
+    st.subheader(f"👋 Hello, {st.session_state.username}")
     uploaded = st.file_uploader("🎙️ Upload audio (wav, mp3, m4a)", type=["wav", "mp3", "m4a"])
     if uploaded:
         ext = uploaded.name.split('.')[-1]
@@ -129,3 +120,31 @@ if st.session_state.logged_in:
 
         save_data(st.session_state.username, uploaded.name, transcription, corrected)
         st.success("✅ Saved to file.json")
+
+# Logout Page
+def logout_page():
+    st.session_state.logged_in = False
+    st.session_state.username = None
+    st.success("Logged out!")
+    st.experimental_rerun()
+
+# ----------------- Main App ------------------
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+    st.session_state.username = None
+
+# Sidebar Navigation
+menu = st.sidebar.radio("Menu", ["Login", "Register", "Logout" if st.session_state.logged_in else None, "Upload Audio"] if st.session_state.logged_in else ["Login", "Register"])
+
+# Display pages based on menu selection
+if menu == "Login":
+    login_page()
+elif menu == "Register":
+    register_page()
+elif menu == "Upload Audio":
+    if st.session_state.logged_in:
+        audio_processing_page()
+    else:
+        st.warning("Please log in first.")
+elif menu == "Logout":
+    logout_page()
