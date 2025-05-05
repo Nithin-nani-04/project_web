@@ -12,12 +12,12 @@ st.set_page_config(page_title="🎙️ Voice GEC App", layout="wide")
 # ASR Model: Wav2Vec2
 asr_model_name = "jonatasgrosman/wav2vec2-large-xlsr-53-english"
 processor = Wav2Vec2Processor.from_pretrained(asr_model_name)
-asr_model = Wav2Vec2ForCTC.from_pretrained(asr_model_name)
+asr_model = Wav2Vec2ForCTC.from_pretrained(asr_model_name).to('cpu')
 
 # Grammar Correction Model
 gec_model_name = "gotutiyan/gec-t5-base-clang8"
 tokenizer = AutoTokenizer.from_pretrained(gec_model_name)
-gec_model = AutoModelForSeq2SeqLM.from_pretrained(gec_model_name)
+gec_model = AutoModelForSeq2SeqLM.from_pretrained(gec_model_name).to('cpu')
 
 # ---------------------- Utility Functions ---------------------- #
 
