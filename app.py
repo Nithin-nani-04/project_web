@@ -23,10 +23,13 @@ asr_model, gec_tokenizer, gec_model = load_models()
 
 # ----------------- User Management ------------------
 def load_users():
+    # Check if users file exists
     if os.path.exists(USERS_FILE):
         with open(USERS_FILE, "r") as f:
             return json.load(f)
-    return []
+    else:
+        # If the file doesn't exist, return an empty list
+        return []
 
 def save_users(users):
     with open(USERS_FILE, "w") as f:
