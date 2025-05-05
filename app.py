@@ -1,8 +1,13 @@
+import streamlit as st
 import torch
 from transformers import Wav2Vec2Processor, Wav2Vec2ForCTC, AutoTokenizer, AutoModelForSeq2SeqLM
 import soundfile as sf
 import os
 import json
+import re
+
+# Set Streamlit page configuration (MUST be at the top)
+st.set_page_config(page_title="Speech-to-Text and GEC", page_icon="📝", layout="wide")
 
 # Check if CUDA is available, otherwise use CPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -120,9 +125,6 @@ def main_page():
     elif menu == "Logout":
         st.session_state.logged_in = False
         st.success("You have logged out successfully.")
-
-# Set Streamlit page configuration
-st.set_page_config(page_title="Speech-to-Text and GEC", page_icon="📝", layout="wide")
 
 if __name__ == "__main__":
     main_page()
